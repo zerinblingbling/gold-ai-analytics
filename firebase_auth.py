@@ -1,10 +1,24 @@
 import os
 import requests
+import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
 
-API_KEY = os.getenv("FIREBASE_API_KEY", "").strip()
+
+def get_secret(name):
+    """Read a secret from Streamlit Cloud first, then fall back to local .env."""
+    try:
+        value = st.secrets.get(name)
+        if value:
+            return str(value).strip()
+    except Exception:
+        pass
+
+    return os.getenv(name, "").strip()
+
+
+API_KEY = get_secret("FIREBASE_API_KEY")
 BASE_URL = "https://identitytoolkit.googleapis.com/v1/accounts"
 
 ERROR_MESSAGES = {
@@ -38,7 +52,6 @@ def _post(action, email, password):
         return data
 
     code = data.get("error", {}).get("message", "FIREBASE_AUTH_ERROR")
-    # Firebase can append details after a colon.
     short_code = code.split(" : ", 1)[0]
     raise RuntimeError(ERROR_MESSAGES.get(short_code, code))
 
