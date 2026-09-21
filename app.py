@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from gold_service import get_gold_spot, get_gold_history
 from stats_service import calculate_statistics
 from ai_service import ask_gold_ai
+from firebase_auth import register_user, login_user
 
 def get_bg_image():
     path = Path(__file__).parent / "assets" / "gold-background.png"
@@ -238,6 +239,69 @@ st.markdown(
 )
 
 
+# =========================================================
+# Firebase Authentication gate
+# =========================================================
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "user_email" not in st.session_state:
+    st.session_state.user_email = ""
+
+if not st.session_state.authenticated:
+    st.markdown("""
+    <div style="max-width:520px;margin:5vh auto 1.25rem auto;text-align:center;">
+      <div style="font-size:.78rem;letter-spacing:.18em;color:#e32636;font-weight:800;">SECURE ACCESS</div>
+      <div style="font-size:2.25rem;font-weight:850;margin-top:.35rem;">Gold Analytics</div>
+      <div style="color:#96969f;margin-top:.35rem;">Sign in or create an account to continue</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    login_tab, register_tab = st.tabs(["Login", "Register"])
+
+    with login_tab:
+        with st.form("login_form"):
+            login_email = st.text_input("Email", placeholder="name@example.com")
+            login_password = st.text_input("Password", type="password")
+            login_submit = st.form_submit_button("Login", use_container_width=True)
+        if login_submit:
+            if not login_email or not login_password:
+                st.warning("กรุณากรอก Email และ Password")
+            else:
+                try:
+                    user = login_user(login_email, login_password)
+                    st.session_state.authenticated = True
+                    st.session_state.user_email = user.get("email", login_email)
+                    st.session_state.id_token = user.get("idToken", "")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Login ไม่สำเร็จ: {e}")
+
+    with register_tab:
+        with st.form("register_form"):
+            reg_email = st.text_input("Email", placeholder="name@example.com", key="reg_email")
+            reg_password = st.text_input("Password", type="password", key="reg_password", help="อย่างน้อย 6 ตัวอักษร")
+            reg_confirm = st.text_input("Confirm password", type="password", key="reg_confirm")
+            reg_submit = st.form_submit_button("Create account", use_container_width=True)
+        if reg_submit:
+            if not reg_email or not reg_password:
+                st.warning("กรุณากรอก Email และ Password")
+            elif reg_password != reg_confirm:
+                st.error("Password และ Confirm password ไม่ตรงกัน")
+            elif len(reg_password) < 6:
+                st.error("Password ต้องมีอย่างน้อย 6 ตัวอักษร")
+            else:
+                try:
+                    user = register_user(reg_email, reg_password)
+                    st.session_state.authenticated = True
+                    st.session_state.user_email = user.get("email", reg_email)
+                    st.session_state.id_token = user.get("idToken", "")
+                    st.success("สร้างบัญชีสำเร็จ")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"สมัครสมาชิกไม่สำเร็จ: {e}")
+
+    st.stop()
+
 @st.cache_data(ttl=300)
 def load_spot():
     return get_gold_spot()
@@ -268,6 +332,15 @@ st.markdown(f"""
   <div class="market-status"><span class="live-dot"></span>XAU/USD · GOLDPRICE.DEV</div>
 </div>
 """, unsafe_allow_html=True)
+
+user_col, logout_col = st.columns([8, 1.4])
+with user_col:
+    st.caption(f"Signed in as {st.session_state.user_email}")
+with logout_col:
+    if st.button("Logout", use_container_width=True):
+        for key in ["authenticated", "user_email", "id_token"]:
+            st.session_state.pop(key, None)
+        st.rerun()
 
 tabs = st.tabs(["Overview", "Market Data", "Analytics", "Market Insights"])
 
@@ -426,18 +499,36 @@ with tabs[3]:
         </div>
         """,unsafe_allow_html=True)
         st.write("")
+        # Prompt presets use session_state so the selected prompt is visibly
+        # inserted into the text area before the user sends it to Gemini.
+        if "market_question" not in st.session_state:
+            st.session_state["market_question"] = ""
+
+        def set_market_question(prompt):
+            st.session_state["market_question"] = prompt
+
         question=st.text_area(
             "Question",
+            key="market_question",
             placeholder="เช่น วิเคราะห์แนวโน้มของราคาทอง โดยพิจารณา Return, Volatility, MA7 และ MA30",
             height=130,label_visibility="collapsed"
         )
         q1,q2,q3=st.columns(3)
-        if q1.button("Trend",use_container_width=True):
-            question="วิเคราะห์แนวโน้มราคาทองจาก Period Return, MA7 และ MA30"
-        if q2.button("Volatility",use_container_width=True):
-            question="วิเคราะห์ความผันผวนจาก Daily Return และ Daily Volatility"
-        if q3.button("Full summary",use_container_width=True):
-            question="สรุปภาพรวมของราคาทองจากสถิติทั้งหมดที่มี"
+        q1.button(
+            "Trend", use_container_width=True,
+            on_click=set_market_question,
+            args=("วิเคราะห์แนวโน้มราคาทอง XAU/USD ในช่วงเวลาที่เลือก โดยพิจารณา Period Return, MA7 และ MA30 พร้อมอธิบายแนวโน้มระยะสั้นและระยะกลาง",)
+        )
+        q2.button(
+            "Volatility", use_container_width=True,
+            on_click=set_market_question,
+            args=("วิเคราะห์ความผันผวนของราคาทอง XAU/USD ในช่วงเวลาที่เลือก โดยพิจารณา Daily Return และ Daily Volatility พร้อมอธิบายว่าความผันผวนอยู่ในลักษณะใด",)
+        )
+        q3.button(
+            "Full summary", use_container_width=True,
+            on_click=set_market_question,
+            args=("สรุปภาพรวมราคาทอง XAU/USD ในช่วงเวลาที่เลือกจากสถิติทั้งหมดที่มี ได้แก่ ราคาปัจจุบัน Period Return, Daily Volatility, MA7 และ MA30 พร้อมสรุปประเด็นสำคัญที่ควรสังเกต",)
+        )
         if st.button("Analyze market",type="primary",use_container_width=True):
             if not question.strip():
                 st.warning("กรุณาระบุคำถาม")
